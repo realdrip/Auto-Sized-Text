@@ -1,55 +1,50 @@
 @tool
-# # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Twister
-#
-# AutoSize LineEdit.
-# # # # # # # # # # # # # # # # # # # # # # # # # # #
-class_name AutoSizeLineEdit
-extends LineEdit
+class_name AutoSizeLineEdit extends LineEdit
 
 @export_tool_button("FORCE REFRESH")
-var refresh_button: Callable = resize_text
+var refresh_button: Callable = RequestResizeText
 
 @export_group("Auto Font Size")
 ## String value of the LineEdit.
 ##[br][br]
 ## Note: Changing text using this property won't emit the text_changed signal.
 @export
-var _text : String:
+var _text: String:
 	set(new_text):
 		_text = new_text
-		if alignment == HORIZONTAL_ALIGNMENT_FILL and !_text.is_empty():
+		if alignment == HORIZONTAL_ALIGNMENT_FILL and not _text.is_empty():
 			# HACK: https://github.com/SpielmannSpiel/AutoSizeText/issues/3
 			text = _text + " "
+			RequestResizeText()
 			return
+
 		text = _text
+		RequestResizeText()
 
 ## Min text size to reach
 @export_range(1, 512)
 var min_size: int = 8:
 	set(new_min):
 		min_size = min(max(1, new_min), max_size)
-		if is_node_ready():
-			resize_text()
+		RequestResizeText()
 
 ## Max text size to reach
 @export_range(1, 512)
 var max_size: int = 38:
 	set(new_max):
 		max_size = max(min_size, min(new_max, 512))
-		if is_node_ready():
-			resize_text()
+		RequestResizeText()
 
 ## Enable this if you have a focus theme with an overriding border margin modifier.
 @export
-var use_focus_theme : bool = false:
+var use_focus_theme: bool = false:
 	set(use_focus):
 		use_focus_theme = use_focus
 		
 		if use_focus:
-			if !focus_entered.is_connected(update):
+			if not focus_entered.is_connected(update):
 				focus_entered.connect(update)
-			if !focus_exited.is_connected(update):
+			if not focus_exited.is_connected(update):
 				focus_exited.connect(update)
 		else:
 			if focus_entered.is_connected(update):
@@ -70,11 +65,9 @@ var step_sizes: Array[int] = []:
 		step_sizes.sort()
 
 		notify_property_list_changed()
-		resize_text()
-
+		RequestResizeText()
 
 var _processing_flag: bool = false
-
 
 func _set(property: StringName, _value: Variant) -> bool:
 	if (
@@ -84,39 +77,35 @@ func _set(property: StringName, _value: Variant) -> bool:
 		or property == &"placeholder_text"
 		or property == &"editable"
 	):
-		resize_text.call_deferred()
+		RequestResizeText()
 
 	return false
 
-
 func _ready() -> void:
-	if _text.is_empty() and !text.is_empty():
+	if _text.is_empty() and not text.is_empty():
 		# Onload handle transition from native LineEdit to AutoSizeLineEdit
 		_text = text
 
+	AutoSizeTextRefresh.Register(self)
 	item_rect_changed.connect(update)
+	RequestResizeText()
 
 	# Process custom themes on focus
 	if use_focus_theme:
-		if !focus_entered.is_connected(update):
+		if not focus_entered.is_connected(update):
 			focus_entered.connect(update)
-		if !focus_exited.is_connected(update):
+		if not focus_exited.is_connected(update):
 			focus_exited.connect(update)
-
 
 func _validate_property(property: Dictionary) -> void:
 	if property.name == &"text":
 		property.usage = PROPERTY_USAGE_NONE
 
-
 func update() -> void:
-	set_process(true)
+	RequestResizeText()
 
-
-func _process(_delta: float) -> void:
-	resize_text()
-	set_process(false)
-
+func RequestResizeText() -> void:
+	call_deferred(&"resize_text")
 
 func resize_text() -> void:
 	if _processing_flag:
@@ -138,38 +127,39 @@ func resize_text() -> void:
 
 	if current_text.is_empty():
 		if placeholder_text.is_empty():
+			_processing_flag = false
 			return
 
 		current_text = placeholder_text
 		use_clear_btn = false
 
-	if null == font:
+	if font == null:
 		font = get_theme_default_font()
 
 	var right_icon_size: float = 0.0
 
-	if null != right_icon:
+	if right_icon != null:
 		# Assume native size
 		right_icon_size = right_icon.get_size().x
 
 	if use_clear_btn:
-		var _clear: Texture2D = get(&"theme_override_icons/clear")
-		if null == _clear:
-			_clear = get_theme_icon(&"clear")
-		if _clear is Texture2D:
-			right_icon_size += (_clear as Texture2D).get_size().x
+		var clearIcon: Texture2D = get(&"theme_override_icons/clear")
+		if clearIcon == null:
+			clearIcon = get_theme_icon(&"clear")
+		if clearIcon is Texture2D:
+			right_icon_size += clearIcon.get_size().x
 
 	#endregion
 
-	var rect_size : float = get_rect().size.x
-	var current_theme : StyleBox = null
+	var rect_size: float = get_rect().size.x
+	var current_theme: StyleBox = null
 
 	if use_focus_theme:
 		if has_focus():
 			current_theme = get(&"theme_override_styles/focus")
 			if current_theme == null:
 				current_theme = get_theme_stylebox(&"focus")
-		elif !editable:
+		elif not editable:
 			current_theme = get(&"theme_override_styles/read_only")
 			if current_theme == null:
 				current_theme = get_theme_stylebox(&"read_only")
@@ -178,7 +168,7 @@ func resize_text() -> void:
 			if current_theme == null:
 				current_theme = get_theme_stylebox(&"normal")
 	else:
-		if !editable:
+		if not editable:
 			current_theme = get(&"theme_override_styles/read_only")
 			if current_theme == null:
 				current_theme = get_theme_stylebox(&"read_only")
@@ -199,7 +189,7 @@ func resize_text() -> void:
 		rect_size -= current_theme.content_margin_left
 		rect_size -= current_theme.content_margin_right
 
-	for font_size_iterator : int in get_iterator():
+	for font_size_iterator: int in get_iterator():
 		set(&"theme_override_font_sizes/font_size", font_size_iterator)
 
 		font_size = font.get_string_size(
@@ -226,12 +216,11 @@ func resize_text() -> void:
 		if not needs_resize(rect_size - offset, font_size.x):
 			break
 
-	set_deferred(&"_processing_flag", false)
+	_processing_flag = false
+	update_minimum_size()
 
-
-func needs_resize(rect_size : float, font_size : float) -> bool:
+func needs_resize(rect_size: float, font_size: float) -> bool:
 	return rect_size < font_size
-
 
 func get_iterator() -> Array:
 	if len(step_sizes) >= 2:
@@ -242,4 +231,4 @@ func get_iterator() -> Array:
 	if len(step_sizes) == 1:
 		push_warning(name + " Step sizes needs at least 2 numbers to work")
 
-	return range(max_size, min_size, -1)
+	return range(max_size, min_size - 1, -1)
