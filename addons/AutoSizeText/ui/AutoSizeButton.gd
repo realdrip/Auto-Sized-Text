@@ -1,11 +1,6 @@
 @tool
-class_name AutoSizeButton
-extends Button
+class_name AutoSizeButton extends Button
 
-signal text_changed(old_text: String, new_text: String)
-
-## Since it is not possible to override existing variables in gdscript,
-## this needs to be a dirty workaround
 @export_multiline
 var button_text: String = "":
 	get:
@@ -16,12 +11,9 @@ var button_text: String = "":
 		notify_property_list_changed()
 		_sync_label()
 		_update_label()
-		
-		if not Engine.is_editor_hint() and _label != null:
-			text_changed.emit(_label.text, button_text)
 
 @export_tool_button("FORCE REFRESH")
-var refresh_button: Callable = _update_label
+var refresh_button: Callable = RequestResizeText
 
 @export_group("Auto Font Size")
 
@@ -78,36 +70,31 @@ var step_sizes: Array[int] = []:
 		_update_label()
 
 
-var _processing_flag: bool = false
 var _label: AutoSizeLabel
 var _saved_theme_colors: Dictionary[String, Color]
 
-
 func _ready() -> void:
-	# TODO: change defaults instead of hard-setting!
-
-	# smalles possible font to force the button smallest size
 	set(&"theme_override_font_sizes/font_size", 1)
 	_prepare_colors()
 
 	clip_text = true
 	
 	if _label == null:
-		#print("CREATE LABEL FOR: " + name)
 		_label = AutoSizeLabel.new()
+		_label.auto_register_refresh = false
 		_label.force_default_settings()
-		add_child(_label)
+		add_child(_label, false, Node.INTERNAL_MODE_BACK)
 		_label.size = size
 		_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		_label.set_anchors_preset(PRESET_FULL_RECT)
 		
+	AutoSizeTextRefresh.Register(self)
 	_sync_label()
-	_update_label()
-	#draw.connect(resize_text)
-	#resized.connect(do_resize_text)
-	#do_resize_text()
+	RequestResizeText()
 
+func RequestResizeText() -> void:
+	call_deferred(&"_update_label")
 
 func _sync_label() -> void:
 	if _label == null:
@@ -117,15 +104,14 @@ func _sync_label() -> void:
 	_label.max_font_size = max_font_size
 	_label.step_sizes = step_sizes
 
-
 func _update_label() -> void:
 	if _label == null:
 		return
 		
 	_label.text = button_text
-	# TODO: detect current button state to pass on the color
+	_label.auto_translate_mode = auto_translate_mode
 	_sync_color("font_color")
-	_label.do_resize_text()
+	_label.call_deferred(&"do_resize_text")
 	
 	if Engine.is_editor_hint() and text != "":
 		push_warning(
@@ -133,27 +119,24 @@ func _update_label() -> void:
 			 % [name, text]
 		)
 	
-
-func _prepare_colors():
+func _prepare_colors() -> void:
 	const colors_to_disable: Array[String] = [
 		"font_color",
 		"font_disabled_color",
 		"font_hover_pressed_color",
 		"font_hover_color",
-	 	"font_focus_color",
+		"font_focus_color",
 		"font_pressed_color",
 	]
 	
-	for color_name in colors_to_disable:
-		# TODO: get_theme_color always returns (0, 0, 0, 0), WHY?
+	for color_name: String in colors_to_disable:
 		_saved_theme_colors[color_name] = get_theme_color(color_name, "Button")
-		#print(_saved_theme_colors[color_name])
 		
-		# theme-overriding in editor will save the changes and break on scene reload
 		if not Engine.is_editor_hint():
 			set("theme_override_colors/" + color_name, Color(0, 0, 0, 0))
 
-	
 func _sync_color(color_type: String) -> void:
-	var theme_color: Color = _saved_theme_colors[color_type] #get_theme_color(color_type, "Button")
-	_label.set(&"theme_override_colors/font_color", theme_color)
+	if _label == null:
+		return
+
+	_label.set(&"theme_override_colors/font_color", _saved_theme_colors[color_type])
