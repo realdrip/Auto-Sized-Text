@@ -1,17 +1,8 @@
 @tool
-class_name AutoSizeLabel
-extends Label
-
-## watch_text_change true is needed for this event to work
-signal text_changed(old_text: String, new_text: String)
-
-## When true, text-size will be re-calculated when the text is changed.[br]
-## Needed for the text_changed event to work.
-@export
-var watch_text_change: bool = false
+class_name AutoSizeLabel extends Label
 
 @export_tool_button("FORCE REFRESH")
-var refresh_button: Callable = do_resize_text
+var refresh_button: Callable = RequestResizeText
 
 @export_group("Auto Font Size")
 
@@ -30,7 +21,7 @@ var min_font_size: int = 8:
 			)
 
 		notify_property_list_changed()
-		resize_text()
+		RequestResizeText()
 
 ## Max text size to reach
 @export_range(1, 512, 1.0)
@@ -47,7 +38,7 @@ var max_font_size: int = 38:
 			)
 
 		notify_property_list_changed()
-		resize_text()
+		RequestResizeText()
 
 @export_group("Step Size")
 
@@ -62,69 +53,48 @@ var step_sizes: Array[int] = []:
 		step_sizes.sort()
 		
 		notify_property_list_changed()
-		resize_text()
+		RequestResizeText()
 
-
+var auto_register_refresh: bool = true
 var _processing_flag: bool = false
-var _last_text: String = ""
-
 
 func _ready() -> void:
-	# TODO: change defaults instead of hard-setting!
 	force_default_settings()
 
-	draw.connect(resize_text)
-	resized.connect(do_resize_text)
-	do_resize_text()
+	if auto_register_refresh:
+		AutoSizeTextRefresh.Register(self)
 
-
-func _process(_delta: float) -> void:
-	if watch_text_change:
-		if text != _last_text:
-			do_resize_text()
-			
-			if not Engine.is_editor_hint():
-				text_changed.emit(_last_text, text)
-				
-			_last_text = text
-
+	resized.connect(RequestResizeText)
+	RequestResizeText()
 
 func force_default_settings() -> void:
 	if autowrap_mode == TextServer.AUTOWRAP_OFF:
 		autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		#push_warning("changed autowrap_mode to " + str(autowrap_mode))
 
 	if text_overrun_behavior == TextServer.AUTOWRAP_OFF:
 		text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		#push_warning("changed text_overrun_behavior to " + str(text_overrun_behavior))
 
 	clip_text = true
 
-	
+func RequestResizeText() -> void:
+	call_deferred(&"do_resize_text")
+
 func resize_text() -> void:
-	if not needs_resize():
-		return
-
-	do_resize_text()
-
+	RequestResizeText()
 
 func do_resize_text() -> void:
-	# Prevent draw call stack handler
 	if _processing_flag:
 		return 
 	
 	_processing_flag = true
 	for target_font_size: int in get_iterator():
 		set(&"theme_override_font_sizes/font_size", target_font_size)
-
-		# force a refresh before checking needs_resize
-		custom_minimum_size = Vector2(custom_minimum_size.x, custom_minimum_size.y)
+		update_minimum_size()
 
 		if not needs_resize():
 			break
 	
 	_processing_flag = false
-
 
 func get_iterator() -> Array:
 	if len(step_sizes) >= 2:
@@ -135,8 +105,7 @@ func get_iterator() -> Array:
 	if len(step_sizes) == 1:
 		push_warning(name + " Step sizes needs at least 2 numbers to work")
 	
-	return range(max_font_size, min_font_size, -1)
-
+	return range(max_font_size, min_font_size - 1, -1)
 
 func needs_resize() -> bool:
 	return get_line_count() > get_visible_line_count()
