@@ -1,17 +1,11 @@
 @tool
-# # # # # # # # # # # # # # # # # # # # # # # # # # #
-# Twister
-#
-# AutoSize TextEdit.
-# # # # # # # # # # # # # # # # # # # # # # # # # # #
-class_name AutoSizeTextEdit
-extends TextEdit
+class_name AutoSizeTextEdit extends TextEdit
 
 # Taking custom _char offset prevent text clip by rect
 const OFFSET_BY: String = "_"
 
 @export_tool_button("FORCE REFRESH")
-var refresh_button: Callable = resize_text
+var refresh_button: Callable = RequestResizeText
 
 ## String value of the TextEdit.
 @export_multiline
@@ -23,13 +17,16 @@ var _text: String = "":
 		else:
 			set(&"text", _text)
 
+		if is_node_ready():
+			RequestResizeText()
+
 ## Enable auto size text function.
 @export
 var enable_auto_resize: bool = true:
 	set(value):
 		enable_auto_resize = value
 		if is_node_ready():
-			set_deferred(&"_text", _text)
+			RequestResizeText()
 
 ## This cut allows you to cut the string if the width limit is exceeded and works if the minimum size is reached.
 @export
@@ -37,7 +34,7 @@ var auto_split_text: bool = false:
 	set(value):
 		auto_split_text = value
 		if is_node_ready():
-			set_deferred(&"_text", _text)
+			RequestResizeText()
 
 @export_group("Auto Font Size")
 
@@ -47,7 +44,7 @@ var min_size: int = 8:
 	set(new_min):
 		min_size = min(max(1, new_min), max_size)
 		if is_node_ready():
-			resize_text()
+			RequestResizeText()
 
 ## Max text size to reach
 @export_range(1, 512)
@@ -55,7 +52,7 @@ var max_size: int = 38:
 	set(new_max):
 		max_size = max(min_size, min(new_max, 512))
 		if is_node_ready():
-			resize_text()
+			RequestResizeText()
 
 ## Enable this if you have a focus theme with an overriding border margin modifier.
 @export
@@ -64,15 +61,15 @@ var use_focus_theme: bool = false:
 		use_focus_theme = use_focus
 		
 		if use_focus:
-			if !focus_entered.is_connected(update):
-				focus_entered.connect(update)
-			if !focus_exited.is_connected(update):
-				focus_exited.connect(update)
+			if !focus_entered.is_connected(RequestResizeText):
+				focus_entered.connect(RequestResizeText)
+			if !focus_exited.is_connected(RequestResizeText):
+				focus_exited.connect(RequestResizeText)
 		else:
-			if focus_entered.is_connected(update):
-				focus_entered.disconnect(update)
-			if focus_exited.is_connected(update):
-				focus_exited.disconnect(update)
+			if focus_entered.is_connected(RequestResizeText):
+				focus_entered.disconnect(RequestResizeText)
+			if focus_exited.is_connected(RequestResizeText):
+				focus_exited.disconnect(RequestResizeText)
 
 @export_group("Step Size")
 
@@ -87,29 +84,27 @@ var step_sizes: Array[int] = []:
 		step_sizes.sort()
 
 		notify_property_list_changed()
-		resize_text()
+		RequestResizeText()
 
 
 var _processing_flag: bool = false
-
+var _resize_requested: bool = false
 
 ## Set text to TextEdit with auto size function.
 func set_auto_size_text(new_text: String) -> void:
 	_text = new_text
 
-
 ## Get original text setted from TextEdit auto size.
 func get_auto_size_text() -> String:
 	return _text
-
 
 func _validate_property(property: Dictionary) -> void:
 	if property.name == &"text":
 		property.usage = PROPERTY_USAGE_NONE
 
-
 func _split_txt() -> void:
 	if _text.is_empty():
+		set(&"text", "")
 		return
 
 	var offset: float = 0.0
@@ -139,12 +134,12 @@ func _split_txt() -> void:
 			new_text += '\n'
 			continue
 
-		var size_offset: Vector2 = font.get_string_size(character, HORIZONTAL_ALIGNMENT_LEFT, -1, character_size, TextServer.JUSTIFICATION_NONE,TextServer.DIRECTION_AUTO,TextServer.ORIENTATION_HORIZONTAL)
+		var size_offset: Vector2 = font.get_string_size(character, HORIZONTAL_ALIGNMENT_LEFT, -1, character_size, TextServer.JUSTIFICATION_NONE, TextServer.DIRECTION_AUTO, TextServer.ORIENTATION_HORIZONTAL)
 
 		if offset < size_offset.x:
-			var split: PackedStringArray  = character.split()
+			var split: PackedStringArray = character.split()
 			var current_character: String = ""
-			var final: String             = ""
+			var final: String = ""
 
 			for _char: String in split:
 				if "\n" == _char:
@@ -172,37 +167,50 @@ func _split_txt() -> void:
 		else:
 			new_text += '\n' + character
 
-	set(&"text",new_text.strip_edges())
-
+	set(&"text", new_text.strip_edges())
 
 func _set(property: StringName, _value: Variant) -> bool:
 	if property == &"text" or property == &"placeholder_text" or property == &"editable":
-		resize_text.call_deferred()
+		if not _processing_flag:
+			RequestResizeText()
 
 	return false
-
 
 func _ready() -> void:
 	if _text.is_empty() and !text.is_empty():
 		# Onload handle transition from native TextEdit to AutoSizeTextEdit
 		_text = text
 
-	item_rect_changed.connect(update)
+	AutoSizeTextRefresh.Register(self)
+
+	if !item_rect_changed.is_connected(RequestResizeText):
+		item_rect_changed.connect(RequestResizeText)
 
 	# Process custom themes on focus
 	if use_focus_theme:
-		if !focus_entered.is_connected(update):
-			focus_entered.connect(update)
-		if !focus_exited.is_connected(update):
-			focus_exited.connect(update)
+		if !focus_entered.is_connected(RequestResizeText):
+			focus_entered.connect(RequestResizeText)
+		if !focus_exited.is_connected(RequestResizeText):
+			focus_exited.connect(RequestResizeText)
 
-func update() -> void:
-	set_process(true)
+	RequestResizeText()
 
-func _process(_delta: float) -> void:
-	_text = _text
-	set_process(false)
+func RequestResizeText() -> void:
+	if not is_node_ready():
+		return
 
+	if _resize_requested:
+		return
+
+	_resize_requested = true
+	call_deferred(&"_RunRequestedResizeText")
+
+func _RunRequestedResizeText() -> void:
+	if auto_split_text:
+		_split_txt()
+
+	resize_text()
+	_resize_requested = false
 
 func resize_text() -> void:
 	if _processing_flag:
@@ -212,6 +220,7 @@ func resize_text() -> void:
 
 	if !enable_auto_resize:
 		set(&"theme_override_font_sizes/font_size", max_size)
+		update_minimum_size()
 		set_deferred(&"_processing_flag", false)
 		return
 
@@ -227,6 +236,7 @@ func resize_text() -> void:
 
 	if current_text.is_empty():
 		if placeholder_text.is_empty():
+			set_deferred(&"_processing_flag", false)
 			return
 
 		current_text = placeholder_text
@@ -239,10 +249,10 @@ func resize_text() -> void:
 
 	var txt: PackedStringArray = current_text.split('\n', true, 0)
 	for character: String in txt:
-		var size_offset: Vector2 = font.get_string_size(character, HORIZONTAL_ALIGNMENT_LEFT, -1, int(offset), TextServer.JUSTIFICATION_NONE,TextServer.DIRECTION_AUTO,TextServer.ORIENTATION_HORIZONTAL)
+		var size_offset: Vector2 = font.get_string_size(character, HORIZONTAL_ALIGNMENT_LEFT, -1, int(offset), TextServer.JUSTIFICATION_NONE, TextServer.DIRECTION_AUTO, TextServer.ORIENTATION_HORIZONTAL)
 		font_size_x = maxf(font_size_x, size_offset.x)
 
-	offset = size.x - font.get_string_size(OFFSET_BY, HORIZONTAL_ALIGNMENT_LEFT, -1, int(offset), TextServer.JUSTIFICATION_NONE,TextServer.DIRECTION_AUTO,TextServer.ORIENTATION_HORIZONTAL).x
+	offset = size.x - font.get_string_size(OFFSET_BY, HORIZONTAL_ALIGNMENT_LEFT, -1, int(offset), TextServer.JUSTIFICATION_NONE, TextServer.DIRECTION_AUTO, TextServer.ORIENTATION_HORIZONTAL).x
 
 	if use_placeholder:
 		# HACK: Lines updated response by text only
@@ -291,13 +301,14 @@ func resize_text() -> void:
 	for font_size_iterator: int in iterator:
 		# Refresh rect
 		set(&"theme_override_font_sizes/font_size", font_size_iterator)
+		update_minimum_size()
 
 		font_size_x = 0.0
 		for character: String in txt:
-			var size_offset: Vector2 = font.get_string_size(character, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size_iterator, TextServer.JUSTIFICATION_NONE,TextServer.DIRECTION_AUTO,TextServer.ORIENTATION_HORIZONTAL)
+			var size_offset: Vector2 = font.get_string_size(character, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size_iterator, TextServer.JUSTIFICATION_NONE, TextServer.DIRECTION_AUTO, TextServer.ORIENTATION_HORIZONTAL)
 			font_size_x = maxf(font_size_x, size_offset.x)
 
-		offset = size.x - font.get_string_size(OFFSET_BY, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size_iterator, TextServer.JUSTIFICATION_NONE,TextServer.DIRECTION_AUTO,TextServer.ORIENTATION_HORIZONTAL).x - margin
+		offset = size.x - font.get_string_size(OFFSET_BY, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size_iterator, TextServer.JUSTIFICATION_NONE, TextServer.DIRECTION_AUTO, TextServer.ORIENTATION_HORIZONTAL).x - margin
 
 		if not needs_resize(offset < font_size_x):
 			break
@@ -320,4 +331,4 @@ func get_iterator() -> Array:
 	if len(step_sizes) == 1:
 		push_warning(name + " Step sizes needs at least 2 numbers to work")
 
-	return range(max_size, min_size, -1)
+	return range(max_size, min_size - 1, -1)
