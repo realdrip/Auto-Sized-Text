@@ -1,8 +1,5 @@
 @tool
-class_name AutoSizeCheckButton
-extends CheckButton
-
-signal text_changed(old_text: String, new_text: String)
+class_name AutoSizeCheckButton extends CheckButton
 
 ## Since it is not possible to override existing variables in gdscript,
 ## this needs to be a dirty workaround
@@ -16,12 +13,9 @@ var button_text: String = "":
 		notify_property_list_changed()
 		_sync_label()
 		_update_label()
-		
-		if not Engine.is_editor_hint() and _label != null:
-			text_changed.emit(_label.text, button_text)
 
 @export_tool_button("FORCE REFRESH")
-var refresh_button: Callable = _update_label
+var refresh_button: Callable = RequestResizeText
 
 @export_group("Auto Font Size")
 
@@ -77,16 +71,10 @@ var step_sizes: Array[int] = []:
 		_sync_label()
 		_update_label()
 
-
-var _processing_flag: bool = false
 var _label: AutoSizeLabel
-var _saved_theme_colors: Dictionary[String, Color]
-
+var _saved_theme_colors: Dictionary[String, Color] = {}
 
 func _ready() -> void:
-	# TODO: change defaults instead of hard-setting!
-
-	# smalles possible font to force the button smallest size
 	set(&"theme_override_font_sizes/font_size", 1)
 	_prepare_colors()
 
@@ -94,16 +82,19 @@ func _ready() -> void:
 	
 	if _label == null:
 		_label = AutoSizeLabel.new()
+		_label.auto_register_refresh = false
 		_label.force_default_settings()
-		add_child(_label)
-		_label.size = Vector2(size.x - _get_biggest_check_icon_size().x - _get_icon_space(), size.y)
+		add_child(_label, false, Node.INTERNAL_MODE_BACK)
 		_label.horizontal_alignment = alignment
 		_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		_label.set_anchors_preset(PRESET_FULL_RECT)
 		
+	AutoSizeTextRefresh.Register(self)
+	resized.connect(_on_resized)
 	_sync_label()
-	_update_label()
+	RequestResizeText()
 
+func RequestResizeText() -> void:
+	call_deferred(&"_update_label")
 
 func _sync_label() -> void:
 	if _label == null:
@@ -112,25 +103,38 @@ func _sync_label() -> void:
 	_label.min_font_size = min_font_size
 	_label.max_font_size = max_font_size
 	_label.step_sizes = step_sizes
-
+	_label.horizontal_alignment = alignment
+	_label.auto_translate_mode = auto_translate_mode
 
 func _update_label() -> void:
 	if _label == null:
 		return
 	
+	_sync_label_rect()
 	_label.text = button_text
-	# TODO: detect current button state to pass on the color
 	_sync_color("font_color")
-	_label.do_resize_text()
+	_label.call_deferred(&"do_resize_text")
 	
 	if Engine.is_editor_hint() and text != "":
 		push_warning(
-			"The AutoSizeButton '%s' has the text '%s'. Please set the text to 'button_text' instead of the text property."
+			"The AutoSizeCheckButton '%s' has the text '%s'. Please set the text to 'button_text' instead of the text property."
 			 % [name, text]
 		)
 
+func _on_resized() -> void:
+	RequestResizeText()
 
-func _prepare_colors():
+func _sync_label_rect() -> void:
+	if _label == null:
+		return
+
+	_label.set_anchors_preset(PRESET_FULL_RECT)
+	_label.offset_left = 0
+	_label.offset_top = 0
+	_label.offset_right = -_get_biggest_check_icon_size().x - _get_icon_space()
+	_label.offset_bottom = 0
+
+func _prepare_colors() -> void:
 	const colors_to_disable: Array[String] = [
 		"font_color",
 		"font_disabled_color",
@@ -140,19 +144,17 @@ func _prepare_colors():
 		"font_pressed_color",
 	]
 	
-	for color_name in colors_to_disable:
-		# TODO: get_theme_color always returns (0, 0, 0, 0), WHY?
-		_saved_theme_colors[color_name] = get_theme_color(color_name, "Button")
+	for color_name: String in colors_to_disable:
+		_saved_theme_colors[color_name] = get_theme_color(color_name, "CheckButton")
 		
-		# theme-overriding in editor will save the changes and break on scene reload
 		if not Engine.is_editor_hint():
 			set("theme_override_colors/" + color_name, Color(0, 0, 0, 0))
 
-
 func _sync_color(color_type: String) -> void:
-	var theme_color: Color = _saved_theme_colors[color_type] #get_theme_color(color_type, "Button")
-	_label.set(&"theme_override_colors/font_color", theme_color)
+	if _label == null:
+		return
 
+	_label.set(&"theme_override_colors/font_color", _saved_theme_colors[color_type])
 
 func _get_biggest_check_icon_size() -> Vector2:
 	const icons_to_check: Array[String] = [
@@ -167,32 +169,29 @@ func _get_biggest_check_icon_size() -> Vector2:
 		"unchecked_disabled_mirrored"
 	]
 	
-	var biggest_size: Vector2 = Vector2(0 , 0)
+	var biggestSize: Vector2 = Vector2.ZERO
 	
-	for icon_name in icons_to_check:
-		var theme_icon = get("theme_override_icons/" + icon_name)
-		if theme_icon == null:
+	for icon_name: String in icons_to_check:
+		var themeIcon: Texture2D = get("theme_override_icons/" + icon_name)
+		if themeIcon == null:
 			continue
 
-		if theme_icon.size.x > biggest_size.x:
-			biggest_size = theme_icon.size
+		if themeIcon.get_size().x > biggestSize.x:
+			biggestSize = themeIcon.get_size()
 	
-	for icon_name in icons_to_check:
-		var theme_icon: Texture2D = get_theme_icon(icon_name, "CheckButton")
-		if theme_icon == null:
+	for icon_name: String in icons_to_check:
+		var themeIcon: Texture2D = get_theme_icon(icon_name, "CheckButton")
+		if themeIcon == null:
 			continue
 
-		if theme_icon.get_size().x > biggest_size.x:
-			biggest_size = theme_icon.get_size()
+		if themeIcon.get_size().x > biggestSize.x:
+			biggestSize = themeIcon.get_size()
 	
-	return biggest_size
-
+	return biggestSize
 
 func _get_icon_space() -> int:
-	var margin: int = 0
-	margin = get_theme_constant("h_separation", "CheckButton")
-	
-	var stylebox = get_theme_stylebox("normal", "CheckButton")
+	var margin: int = get_theme_constant("h_separation", "CheckButton")
+	var stylebox: StyleBox = get_theme_stylebox("normal", "CheckButton")
 	margin += stylebox.get_margin(SIDE_LEFT)
 	margin += stylebox.get_margin(SIDE_RIGHT)
 	
