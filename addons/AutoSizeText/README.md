@@ -6,7 +6,7 @@ Just use the auto size equivalent instead of the built-in ones, or change your o
 You are good to go.
 
 ## What is different
--The original was check if the text was changed every, single, frame for each nodes...
+-The original was checking if the text was changed every, single, frame for each nodes...
 This was really problematic because it was comparing text to see if it was changed.
 With this, it resizes once. Whenever the localization is changed, all the text get resized.
 You can resize all the text or some particular text yourself as well, if that is what you want.
